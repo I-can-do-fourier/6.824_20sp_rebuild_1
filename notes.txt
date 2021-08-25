@@ -1,0 +1,10 @@
+1. go的inline函数。为了方便启动另一个 线程 ( go func(args){body}(para) )
+2. WaitGroup
+3. rpc的原理和机制
+4.dlv debug不能正常导入plugin
+5.使用waitGroup和、for循环和go func创建多个子线程时，要注意对for的每个item
+重新传递一次 item:=item或者go func(arg T){}()
+
+因为go func创建的子线程可能不会被立即执行，而是先创建多个子线程之后
+再开始执行，所以item的值可能会改变。而
+go func(arg T){}()的arg会在func创建时立刻被传递，不会被覆盖。

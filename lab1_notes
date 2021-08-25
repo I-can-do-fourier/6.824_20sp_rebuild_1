@@ -1,0 +1,19 @@
+1. go build -buildmode=plugin ../mrapps/wc.go
+2. intermediate file可以使用不同的形式保存
+3. 为了获得文件的读写权限，要使用sudo go。但是需要将go的路径进行一些设置
+详见 https://www.cnblogs.com/chr-wonder/p/8464224.html
+
+注意：mrmaster和mrworker都要开启sudo
+
+7. 不要用windows的资源管理器创建文件夹，因为这样运行时会出现权限不够的
+情况
+8. 要将所有未完成的任务构建一个队列(map、reduce分别构建)，
+将完成的从队列中删除。同时要track未完成的数量，和某个task是否
+完成。
+9. 给worker编号
+10. json encode
+11.Deterministic and Nondeterministic Functions. 见网上和mapReduce
+论文
+12.可以使用channel加上生产者消费者模式进行master和worker的并发
+处理
+13. map和reduce都要加入防crash机制

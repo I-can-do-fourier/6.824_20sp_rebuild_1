@@ -6,8 +6,10 @@ package mr
 // remember to capitalize all names.
 //
 
-import "os"
-import "strconv"
+import (
+	"os"
+	"strconv"
+)
 
 //
 // example to show how to declare the arguments
@@ -24,6 +26,26 @@ type ExampleReply struct {
 
 // Add your RPC definitions here.
 
+type StateArgs struct {
+	Cat      int  //which kind of task
+	TaskId   int  //the task that if handled
+	Finished bool //if finish a given task
+
+	Idle     bool //if idle
+	WorkerId int  //the id of the worker
+
+	FileName string
+}
+
+type StateReply struct {
+	Cat       int    //which kind of task
+	TaskId    int    //task id
+	FileName  string //which file should be  handled
+	Nreduce   int
+	MapCount  int // the number of map tasks
+	WorkerId  int
+	FileNames []int // the file names for reduce task
+}
 
 // Cook up a unique-ish UNIX-domain socket name
 // in /var/tmp, for the master.
