@@ -38,7 +38,12 @@ func ihash(key string) int {
 	return int(h.Sum32() & 0x7fffffff)
 }
 
-var args StateArgs = StateArgs{0, 0, false, true, 0, ""}
+type identity struct {
+	id   int
+	idle int
+}
+
+var id identity
 
 //
 // main/mrworker.go calls this function.
@@ -50,46 +55,59 @@ func Worker(mapf func(string, string) []KeyValue,
 
 	// uncomment to send the Example RPC to the master.
 	// CallExample()
+
+	dic, errdic := ioutil.TempDir("./", "lab_interFiles-")
+	if errdic != nil {
+
+		panic(nil)
+	}
+
+	args := StateArgs{0, 0, false, true, 0, ""}
+
+	reply := StateReply{}
+
+	call("Master.WorkerHandler", &args, &reply)
+
+	id.id = reply.WorkerId
+
+	//send := reply.send
+	//receive := reply.receive
+
 	for {
 
-		//args := StateArgs{0, 0, false, true}
-		reply := StateReply{}
-		//fmt.Println("calling the server")
-		call("Master.RequestHandler", &args, &reply)
-		//fmt.Println("receive task from server")
+		call("Master.TaskHandler", &args, &reply)
 
-		args.Cat = reply.Cat
-		args.TaskId = reply.TaskId
-		args.WorkerId = reply.WorkerId
-		args.Finished = false
+		if reply.Cat == 0 {
 
-		if reply.Cat == 1 {
+			fmt.Println(reply.Cat, reply.TaskId, reply.FileName)
+			s := mapTask(mapf, reply, reply.Nreduce, dic)
+			args.TaskId = reply.TaskId
+			args.Cat = reply.Cat
+			args.Finished = true
+			args.FileName = s
+		} else if reply.Cat == 1 {
 
-			args.Idle = false
-
-			fmt.Printf("cat: mapTask,file: %v,taskId: %v\n",
-				reply.FileName, reply.TaskId)
-			mapTask(mapf, reply.FileName, reply.Nreduce, reply.TaskId)
-
-		} else if reply.Cat == 2 {
-
-			args.Idle = false
-
-			fmt.Printf("cat: reduceTask,taskId: %v\n", reply.TaskId)
-			reduceTask(reducef, reply)
+			fmt.Println(reply.Cat, reply.TaskId, reply.FileName, reply.F)
+			s := reduceTask(reducef, reply.FileNames, reply.TaskId)
+			args.TaskId = reply.TaskId
+			args.Cat = reply.Cat
+			args.Finished = true
+			args.FileName = s
 
 		} else {
 
-			return
-
+			break
 		}
 
 	}
 
 }
 
-func mapTask(mapf func(string, string) []KeyValue, filename string, nreduce int,
-	taskId int) {
+func mapTask(mapf func(string, string) []KeyValue, reply StateReply,
+	nreduce int, dic string) string {
+
+	filename := reply.FileName
+	taskId := reply.TaskId
 
 	intermediate := []KeyValue{}
 
@@ -127,7 +145,7 @@ func mapTask(mapf func(string, string) []KeyValue, filename string, nreduce int,
 
 	for i := 0; i < nreduce; i++ {
 
-		path := "lab_interFiles/" + "mr-" + strconv.Itoa(taskId) + "-" + strconv.Itoa(i) + "-" + strconv.Itoa(args.WorkerId)
+		path := dic + "/" + "mr-" + strconv.Itoa(taskId) + "-" + strconv.Itoa(i)
 		//dic := "../lab_interFiles/"
 		//randomString := "mr-" + strconv.Itoa(taskId) + "-" + strconv.Itoa(i) + "-"
 		f, err := os.Create(path)
@@ -146,17 +164,19 @@ func mapTask(mapf func(string, string) []KeyValue, filename string, nreduce int,
 
 	}
 
-	args.Finished = true
-	args.Idle = true
+	//task.WorkerId = id.id
+	//传递临时文件夹目录
+
+	return dic
 
 }
 
-func reduceTask(reducef func(string, []string) string, reply StateReply) {
+func reduceTask(reducef func(string, []string) string, files []string, taskId int) string {
 
-	intermediate := readInterFiles(reply.TaskId, reply.MapCount, reply.FileNames)
+	intermediate := readInterFiles(taskId, len(files), files)
 
 	sort.Sort(ByKey(intermediate))
-	oname := "out-" + strconv.Itoa(reply.TaskId) + "-" + strconv.Itoa(reply.WorkerId)
+	oname := "out-" + strconv.Itoa(taskId-1) + "-" + strconv.Itoa(id.id)
 	//nname := "mr-out-" + strconv.Itoa(reply.TaskId)
 	ofile, _ := os.Create(oname)
 	//
@@ -182,9 +202,7 @@ func reduceTask(reducef func(string, []string) string, reply StateReply) {
 	//os.Rename(oname, nname)
 	ofile.Close()
 
-	args.Finished = true
-	args.Idle = true
-	args.FileName = oname
+	return oname
 
 }
 
@@ -192,13 +210,13 @@ func reduceTask(reducef func(string, []string) string, reply StateReply) {
 //from intermediate files
 //n is the number of files to load which is equal to the
 //number of the map tasks
-func readInterFiles(taskId int, n int, FileNames []int) []KeyValue {
+func readInterFiles(taskId int, n int, FileNames []string) []KeyValue {
 
 	pairs := []KeyValue{}
 
 	for index, item := range FileNames {
 
-		path := "lab_interFiles/" + "mr-" + strconv.Itoa(index) + "-" + strconv.Itoa(taskId) + "-" + strconv.Itoa(item)
+		path := item + "/" + "mr-" + strconv.Itoa(index) + "-" + strconv.Itoa(taskId-1)
 		file, err := os.Open(path)
 
 		if err != nil {
@@ -246,7 +264,7 @@ func CallExample() {
 	call("Master.Example", &args, &reply)
 
 	// reply.Y should be 100.
-	fmt.Printf("reply.Y %v\n", reply.Y)
+	//fmt.Printf("reply.Y %v\n", reply.Y)
 }
 
 //
@@ -268,6 +286,6 @@ func call(rpcname string, args interface{}, reply interface{}) bool {
 		return true
 	}
 
-	fmt.Println(err)
+	//fmt.Println(err)
 	return false
 }

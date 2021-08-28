@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+var ReduceFiles []string
+
 type Master struct {
 	// Your definitions here.
 
@@ -35,124 +37,232 @@ type Master struct {
 	ReducePointer *TaskNode
 
 	workers int //worker的数量
+
+	send chan *TaskNode //一个分配任务的channel
+
+	receive chan ReplyNode //一个接受结果的channel
+
+	mapArray    []*TaskNode
+	reduceArray []*TaskNode
 }
 
 type TaskNode struct {
-	taskId int
+	TaskId int //the task that if handled
 	next   *TaskNode
 	prev   *TaskNode
 
-	count int //被访问的次数
+	Cat int //which kind of task
+	//Finished bool //if finish a given task
+	WorkerId int //the id of the worker
+	FileName string
+
+	status int // 0:unassigned, 1:assigned but unfinished,2:finished
+}
+
+//receive through channel from workers
+type ReplyNode struct {
+	TaskId   int
+	FileName string
+	Cat      int
 }
 
 // Your code here -- RPC handlers for the worker to call.
 
-type Pg struct {
-	name     string
-	finished bool
-}
-
-func (m *Master) RequestHandler(args *StateArgs, reply *StateReply) error {
+func (m *Master) WorkerHandler(args *StateArgs, reply *StateReply) error {
 
 	m.mu.Lock()
 
-	reply.WorkerId = args.WorkerId
-	if args.Finished {
+	reply.send = m.send
+	reply.receive = m.receive
+	reply.WorkerId = m.workers + 1
+	reply.Nreduce = m.Nreduce
 
-		if args.Cat == 1 && !m.MapStatus[args.TaskId] {
+	m.workers++
 
-			m.MapStatus[args.TaskId] = true
-			m.MapFinished--
-
-			m.ReduceTasks[args.TaskId] = args.WorkerId
-			//reply.WorkerId = args.WorkerId
-
-		} else if args.Cat == 2 && !m.ReduceStatus[args.TaskId] {
-
-			m.ReduceStatus[args.TaskId] = true
-			m.ReduceFinished--
-			os.Rename(args.FileName, "mr-out-"+strconv.Itoa(args.TaskId))
-			//reply.WorkerId = args.WorkerId
-
-		}
-
-	}
-
-	if args.Idle {
-
-		if args.WorkerId == 0 {
-
-			reply.WorkerId = m.workers + 1
-			m.workers++
-		}
-
-		m.assignTask(reply)
-
-	}
+	//fmt.Println("assign a worker ", strconv.Itoa(m.workers))
 
 	m.mu.Unlock()
 
 	return nil
 }
 
-func (m *Master) assignTask(reply *StateReply) {
+func (m *Master) TaskHandler(args *StateArgs, reply *StateReply) error {
 
-	time.Sleep(100 * time.Millisecond)
+	//m.mu.Lock()
 
-	if m.MapFinished > 0 {
+	if args.Finished {
 
-		reply.Cat = 1 //assign a map task
+		m.receive <- ReplyNode{args.TaskId, args.FileName, args.Cat}
+		//fmt.Println("receive channel", len(m.receive))
+	}
 
-		//找到一个未完成的task并删除已经完成的task
+	task, ok := <-m.send
 
-		task := m.MapPointer
-		for ; ; task = task.next {
+	if !ok {
+		reply.Cat = -1
+		return nil
+	}
 
-			if task == m.MapHead {
+	reply.Cat = task.Cat
+	reply.FileName = task.FileName
+	reply.TaskId = task.TaskId
 
-			} else if m.MapStatus[task.taskId] {
+	//fmt.Println("ready to send to worker", "cat", reply.Cat, "taskId", reply.TaskId)
 
-				DeleteNode(task)
+	if task.Cat == 1 {
+
+		reply.F = m.ReduceFinished
+		reply.FileNames = ReduceFiles
+	}
+
+	//m.mu.Unlock()
+
+	return nil
+}
+
+func (m *Master) assignTask() {
+
+	mpp := m.MapPointer    //map task pointer
+	rdp := m.ReducePointer //reduce task pointer
+
+	for m.workers == 0 {
+	}
+
+	for ; mpp.next != mpp; mpp = mpp.next {
+
+		if mpp == m.MapHead {
+
+		} else if mpp.status == 0 {
+
+			mpp.status = 1
+			//fmt.Println("assign a mapTask")
+			m.send <- mpp
+		} else if mpp.status == 1 {
+
+			//fmt.Println("wait worker")
+			time.Sleep(time.Duration(50) * time.Millisecond)
+			if mpp.status == 2 {
+				DeleteNode(mpp)
 			} else {
-				break
+
+				mpp.status = 1
+				//fmt.Println("assign a mapTask")
+				m.send <- mpp
+
 			}
 
+		} else {
+			DeleteNode(mpp)
 		}
 
-		reply.TaskId = task.taskId
-		reply.FileName = m.MapTasks[task.taskId]
-		reply.Nreduce = m.Nreduce
-		m.MapPointer = task.next
+	}
 
-	} else if m.ReduceFinished > 0 {
+	if m.MapFinished != 0 {
+	}
 
-		reply.Cat = 2
+	//fmt.Println("send all mapTask")
 
-		task := m.ReducePointer
-		for ; ; task = task.next {
+	for ; rdp.next != rdp; rdp = rdp.next {
 
-			if task == m.ReduceHead { //一开始我写成了MapHead
+		if rdp == m.ReduceHead {
 
-				//time.Sleep(500 * time.Millisecond)
+		} else if rdp.status == 0 {
 
-			} else if m.ReduceStatus[task.taskId] {
+			rdp.status = 1
+			//fmt.Println("assign a reduceTask ", rdp.TaskId)
+			m.send <- rdp
+			//fmt.Println("send channel", len(m.send))
+		} else if rdp.status == 1 {
 
-				DeleteNode(task)
+			//fmt.Println("wait worker")
+			time.Sleep(time.Duration(50) * time.Millisecond)
+			if rdp.status == 2 {
+				DeleteNode(rdp)
 			} else {
-				break
+
+				rdp.status = 1
+				//fmt.Println("assign a reduceTask", rdp.TaskId)
+				m.send <- rdp
 			}
 
+		} else {
+			DeleteNode(rdp)
 		}
 
-		reply.TaskId = task.taskId
-		reply.Nreduce = m.Nreduce
-		reply.MapCount = len(m.MapStatus)
-		reply.FileNames = m.ReduceTasks
-		m.MapPointer = task.next
+	}
 
-	} else {
+	close(m.send)
 
-		reply.Cat = 0
+}
+
+func (m *Master) assign(mpp *TaskNode) {
+
+	for ; mpp.next != mpp; mpp = mpp.next {
+
+		if mpp == m.MapHead {
+
+		} else if mpp.status == 0 {
+
+			m.send <- mpp
+		} else if mpp.status == 1 {
+
+			time.Sleep(time.Duration(50) * time.Millisecond)
+			if mpp.status == 2 {
+				DeleteNode(mpp)
+			} else {
+
+				m.send <- mpp
+
+			}
+
+		} else {
+			DeleteNode(mpp)
+		}
+
+	}
+
+}
+
+func (m *Master) receiveTask() {
+
+	for t := range m.receive {
+
+		file := t.FileName
+		cat := t.Cat
+
+		var task *TaskNode
+
+		if cat == 0 {
+
+			task = m.mapArray[t.TaskId]
+
+		} else {
+
+			task = m.reduceArray[t.TaskId-1]
+		}
+
+		//fmt.Println("process ", cat, task.TaskId)
+
+		if task.Cat == 0 && task.status != 2 {
+
+			m.MapStatus[task.TaskId] = true
+			ReduceFiles[task.TaskId] = file
+			task.status = 2
+
+			m.MapFinished--
+
+		} else if task.Cat == 1 && task.status != 2 {
+
+			m.ReduceStatus[task.TaskId-1] = true
+			task.status = 2
+			os.Rename(file, "mr-out-"+strconv.Itoa(task.TaskId-1))
+
+			m.ReduceFinished--
+		}
+
+		if m.ReduceFinished == 0 {
+			break
+		}
 
 	}
 
@@ -234,7 +344,7 @@ func InitHead(head *TaskNode) {
 
 	head.next = head
 	head.prev = head
-	head.taskId = -1
+	head.TaskId = -1
 
 }
 
@@ -257,15 +367,22 @@ func MakeMaster(files []string, nReduce int) *Master {
 	InitHead(m.MapHead)
 	InitHead(m.ReduceHead)
 
+	m.mapArray = make([]*TaskNode, len(files))
+	m.reduceArray = make([]*TaskNode, nReduce)
+
 	for i := 0; i < len(files); i++ {
 
-		AddNode(m.MapHead, &TaskNode{taskId: i})
+		node := &TaskNode{TaskId: i, Cat: 0, FileName: files[i]}
+		AddNode(m.MapHead, node)
+		m.mapArray[i] = node
 
 	}
 
 	for i := 0; i < nReduce; i++ {
 
-		AddNode(m.ReduceHead, &TaskNode{taskId: i})
+		node := &TaskNode{TaskId: i + 1, Cat: 1}
+		AddNode(m.ReduceHead, node)
+		m.reduceArray[i] = node
 	}
 
 	m.MapPointer = m.MapHead.next
@@ -273,6 +390,23 @@ func MakeMaster(files []string, nReduce int) *Master {
 
 	os.Mkdir("lab_interFiles", 0755)
 
+	m.send = make(chan *TaskNode, 5)
+	m.receive = make(chan ReplyNode, 5)
+
+	ReduceFiles = make([]string, len(files))
+
 	m.server()
+
+	go func() {
+
+		m.assignTask()
+
+	}()
+	go func() {
+
+		m.receiveTask()
+
+	}()
+
 	return &m
 }

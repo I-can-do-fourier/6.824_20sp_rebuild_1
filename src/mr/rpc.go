@@ -35,6 +35,8 @@ type StateArgs struct {
 	WorkerId int  //the id of the worker
 
 	FileName string
+
+	//ch chan int
 }
 
 type StateReply struct {
@@ -44,7 +46,12 @@ type StateReply struct {
 	Nreduce   int
 	MapCount  int // the number of map tasks
 	WorkerId  int
-	FileNames []int // the file names for reduce task
+	FileNames []string // the file names for reduce task
+
+	send    chan *TaskNode
+	receive chan ReplyNode
+
+	F int
 }
 
 // Cook up a unique-ish UNIX-domain socket name
